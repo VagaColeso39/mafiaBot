@@ -1,61 +1,6 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
-from aiogram.filters.callback_data import CallbackData, CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder, KeyboardButton
-from typing import Union
-
-RU = 0
-EN = 1
-DAY = 0
-NIGHT = 1
-DEFAULT_STATE = 0
-JOINING_ROOM_STATE = 1
-
-
-class RolesAddingCb(CallbackData, prefix='RoleAdding'):
-    role_id: int
-    room_id: int
-
-
-class RoleAddCb(CallbackData, prefix='RoleAdd'):
-    role_id: int
-    room_id: int
-    value: int
-
-
-class LangCb(CallbackData, prefix='lang'):
-    language: int
-
-
-class JoinRoomCb(CallbackData, prefix='JoinRoom'):
-    ...
-
-
-class RoomCreationCb(CallbackData, prefix='RoomCreation'):
-    ...
-
-
-class RoomActionsCb(CallbackData, prefix='RoomActions'):
-    action: str
-    room_id: int
-
-
-class RoomSettingsCb(CallbackData, prefix='RoomSettings'):
-    setting: str
-    room_id: int
-
-
-class RoomSettingCb(CallbackData, prefix="RoomSetting"):
-    setting: str
-    value: int
-    room_id: int
-
-
-class UserSettingsCb(CallbackData, prefix='UserSettings'):
-    ...
-
-
-class UserSettingCb(CallbackData, prefix='UserSettings'):
-    setting: str
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from consts import *
+from callbacks import *
 
 
 async def generate_room_actions_cb(room_id: int, language: int):
@@ -68,7 +13,10 @@ async def generate_room_actions_cb(room_id: int, language: int):
             InlineKeyboardButton(text='Настройки комнаты',
                                  callback_data=RoomActionsCb(action='settings', room_id=room_id).pack()),
             InlineKeyboardButton(text='Выйти из комнаты',
-                                 callback_data=RoomActionsCb(action='leave', room_id=room_id).pack())
+                                 callback_data=RoomActionsCb(action='leave', room_id=room_id).pack()),
+            InlineKeyboardButton(text='Начать игру',
+                                 callback_data=RoomActionsCb(action='start', room_id=room_id).pack())
+
         ]])
     else:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[[
@@ -79,7 +27,9 @@ async def generate_room_actions_cb(room_id: int, language: int):
             InlineKeyboardButton(text='Room settings',
                                  callback_data=RoomActionsCb(action='settings', room_id=room_id).pack()),
             InlineKeyboardButton(text='Leave the room',
-                                 callback_data=RoomActionsCb(action='leave', room_id=room_id).pack())
+                                 callback_data=RoomActionsCb(action='leave', room_id=room_id).pack()),
+            InlineKeyboardButton(text='Start the game',
+                                 callback_data=RoomActionsCb(action='start', room_id=room_id).pack())
         ]])
     return keyboard
 
@@ -107,7 +57,11 @@ async def roles_choose_generator_kb(room, language):
         keyboard.inline_keyboard[0].append(
             InlineKeyboardButton(text=role.name[language],
                                  callback_data=RolesAddingCb(room_id=room.id, role_id=role.id).pack()))
+    keyboard.inline_keyboard[0].append(InlineKeyboardButton(text='Назад',
+                                                            callback_data=RoomSettingsCb(setting='cancel',
+                                                                                         room_id=room.id).pack()))
     return keyboard
+
 
 async def generate_role_adding_kb(role_id, room_id, language):
     if language == RU:
@@ -131,6 +85,7 @@ async def generate_role_adding_kb(role_id, room_id, language):
 
         ]])
     return keyboard
+
 
 async def generate_room_setting_kb(room_id: int, setting: str, language: int):
     if setting == 'doReveal':
@@ -159,136 +114,6 @@ async def generate_room_setting_kb(room_id: int, setting: str, language: int):
     else:
         raise NotImplementedError
     return keyboard
-
-
-class User:
-    """Класс пользователя"""
-
-    def __init__(self, lang: int, state: int, tg_id: int):
-        self.language = lang
-        self.state = state
-        self.id = tg_id
-        self.current_room = None
-        self.isShot = False
-        self.isAlive = True
-
-    def set_language(self, lang: int) -> None:
-        self.language = lang
-
-    def set_state(self, state: int):
-        self.state = state
-
-
-class Users:
-    """Класс группы пользователей"""
-
-    def __init__(self):
-        self.users = {}
-
-    def get_user(self, tg_id: int) -> Union[User, None]:
-        if tg_id in self.users:
-            return self.users[tg_id]
-        return None
-
-    def create_user(self, tg_id: int, lang: int, state: int) -> User:
-        self.users[tg_id] = User(lang, state, tg_id)
-        return self.users[tg_id]
-
-    def __str__(self) -> str:
-        return ' '.join(map(str, self.users.keys()))
-
-    def __len__(self) -> int:
-        return len(self.users)
-
-    def __contains__(self, item: Union[int, User]):
-        """Принимает класс пользователя или его tg_id"""
-        if item.__class__ == int:
-            if item in self.users:
-                return True
-            return False
-        if item in self.users.values():
-            return True
-        return False
-
-    def __getitem__(self, user_id: int) -> Union[User, None]:
-        if user_id in self.users:
-            return self.users[user_id]
-        return None
-
-
-class Room(Users):
-    def __init__(self, owner: User, room_id: int, token: str):
-        super().__init__()
-        self.owner: User = owner
-        self.day_state: int = DAY
-        self.add_user(owner)
-        self.id = room_id
-        self.token = token
-        self.settings = {'doReveal': True}
-        self.available_roles = {Doctor: 0, Civilian: 0, Mafia: 0}
-
-    def set_setting(self, setting, value):
-        self.settings[setting] = value
-
-    def add_user(self, user: User) -> None:
-        self.users[user.id] = user
-        user.current_room = self
-
-    def kick(self, user: User):
-        self.users.pop(user.id)
-        user.current_room = None
-
-    def destroy(self):
-        for user in self.users.values():
-            user.current_room = None
-        self.users = {}
-
-
-class Role:
-    def __init__(self, room: Room):
-        self.room = room
-
-    def night_action(self, victim_id: int):
-        ...
-
-    def day_action(self, victim_id: int):
-        ...
-
-
-class Mafia(Role):
-    name = {RU: 'Мафия', EN: "Mafia"}
-    is_day = False
-    is_night = True
-    id = 1
-
-    def __init__(self, room: Room):
-        super().__init__(room)
-
-    def night_action(self, victim_id: int):
-        self.room.users[victim_id].isShot = 1
-
-
-class Doctor(Role):
-    name = {RU: 'Доктор', EN: "Doctor"}
-    is_day = False
-    is_night = True
-    id = 2
-
-    def __init__(self, room: Room):
-        super().__init__(room)
-
-    def night_action(self, victim_id: int):
-        self.room.users[victim_id].isShot = 0
-
-
-class Civilian(Role):
-    name = {RU: 'Мирный', EN: "Civilian"}
-    is_day = False
-    is_night = False
-    id = 0
-
-    def __init__(self, room: Room):
-        super().__init__(room)
 
 
 TEXTS = {
@@ -330,7 +155,15 @@ TEXTS = {
     'wrong_token': {RU: "Неверный токен/ссылка для подключения, или комната удалена",
                     EN: "Wrong token/link for connection, or the room is deleted"},
     'choose_user_setting': {RU: 'Выберите настройку',
-                            EN: "Choose setting"}
+                            EN: "Choose setting"},
+    'too_many_roles': {RU: "У вас добавлено слишком много ролей, уменьшите их количество или пригласите еще людей",
+                       EN: "You've got too many roles added, remove some or invite more players"},
+    'too_many_players': {RU: 'У вас слишком много игроков, увеличьте количество ролей',
+                         EN: "You've got too many players, increase roles amount"},
+    'your_role_is': {RU: 'Ваша роль: {0}, {1}',
+                     EN: "Your role is: {0}, {1}"},
+    'your_teammates_are': {RU: "С вами в команде: {0}",
+                           EN: "You are playing with: 0{}"}
 }
 KEYBOARDS = {
     'choose_language': InlineKeyboardMarkup(inline_keyboard=[[
