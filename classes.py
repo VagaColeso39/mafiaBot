@@ -10,7 +10,13 @@ class User:
         self.state = state
         self.id = tg_id
         self.username = username
-        self.current_room = None
+        self.current_room: Union[Room, None] = None
+        self.is_alive = True
+        self.is_healed = False
+        self.role = None
+        self.made_move = False
+
+    def reset(self):
         self.is_alive = True
         self.is_healed = False
         self.role = None
@@ -28,6 +34,7 @@ class Users:
 
     def __init__(self):
         self.users = {}
+
 
     def get_user(self, tg_id: int) -> Union[User, None]:
         if tg_id in self.users:
@@ -69,7 +76,7 @@ class Room(Users):
         self.add_user(owner)
         self.id = room_id
         self.token = token
-        self.settings = {'doReveal': True}
+        self.settings = {'do_reveal': True}
         self.available_roles = {Doctor: 0, Civilian: 0, Mafia: 0}
         self.is_active = False
         self.teams = {}

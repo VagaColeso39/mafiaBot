@@ -41,8 +41,12 @@ async def choose_language_handler(callback: CallbackQuery, callback_data: Callba
         username = callback.message.chat.username
         users.create_user(user_id, language, DEFAULT_STATE, username)
     await callback.message.edit_text(TEXTS['language_changed'][language])
-    await callback.message.answer(TEXTS['startup'][language], reply_markup=KEYBOARDS['startup'][language])
+    user = users[user_id]
+    if user.current_room is None:
+        return await callback.message.answer(TEXTS['startup'][language], reply_markup=KEYBOARDS['startup'][language])
 
+    keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
+    await callback.message.answer(TEXTS['room_actions'][user.language].format(', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
 
 @dp.callback_query(JoinRoomCb.filter())
 async def join_room_handler(callback: CallbackQuery, callback_data: CallbackData):
@@ -50,8 +54,7 @@ async def join_room_handler(callback: CallbackQuery, callback_data: CallbackData
     await callback.answer()
     user = users[callback.message.chat.id]
     if user.current_room is not None:
-        room_id = user.current_room.id
-        keyboard = await generate_room_actions_cb(room_id, user.language)
+        keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
         return await callback.message.answer(TEXTS['already_joined'][user.language], reply_markup=keyboard)
     user.set_state(JOINING_ROOM_STATE)
     await callback.message.edit_text(TEXTS['enter_token'][user.language])
@@ -63,15 +66,14 @@ async def room_creation_handler(callback: CallbackQuery, callback_data: Callback
     await callback.answer()
     user = users[callback.message.chat.id]
     if user.current_room is not None:
-        room_id = user.current_room.id
-        keyboard = await generate_room_actions_cb(room_id, user.language)
+        keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
         return await callback.message.answer(TEXTS['already_joined'][user.language], reply_markup=keyboard)
     room_id = len(rooms)
     token = secrets.token_urlsafe(16)
     room = Room(owner=user, room_id=room_id, token=token)
     rooms[room_id] = room
-    keyboard = await generate_room_actions_cb(room_id, user.language)
-    await callback.message.answer(TEXTS['room_actions'][user.language], reply_markup=keyboard)
+    keyboard = await generate_room_actions_cb(room, user.language, user)
+    await callback.message.answer(TEXTS['room_actions'][user.language].format(', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
 
 
 @dp.callback_query(RoomActionsCb.filter())
@@ -90,18 +92,20 @@ async def room_actions_handler(callback: CallbackQuery, callback_data: CallbackD
     if action == 'invite':
         await callback.message.edit_text(TEXTS['room_invite'][user.language].format(room.token, room.token))
 
-        keyboard = await generate_room_actions_cb(room.id, user.language)
-        await callback.message.answer(TEXTS['room_actions'][user.language], reply_markup=keyboard)
+        keyboard = await generate_room_actions_cb(room, user.language, user)
+        await callback.message.answer(TEXTS['room_actions'][user.language].format(', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
 
     elif action == 'start':
         roles_amount = sum(room.available_roles.values())
         players_amount = len(room.users)
         if roles_amount > players_amount:
-            keyboard = await generate_room_actions_cb(room.id, user.language)
-            return await callback.message.edit_text(TEXTS['too_many_roles'][user.language], reply_markup=keyboard)
+            keyboard = await generate_room_actions_cb(room, user.language, user)
+            text = TEXTS['too_many_roles'][user.language].format(roles_amount, roles_amount - players_amount)
+            return await callback.message.edit_text(text, reply_markup=keyboard)
         if roles_amount < players_amount:
-            keyboard = await generate_room_actions_cb(room.id, user.language)
-            return await callback.message.edit_text(TEXTS['too_many_players'][user.language], reply_markup=keyboard)
+            keyboard = await generate_room_actions_cb(room, user.language, user)
+            text = TEXTS['too_many_players'][user.language].format(players_amount, players_amount - roles_amount)
+            return await callback.message.edit_text(text, reply_markup=keyboard)
 
         await room_preparation(room)  # Всё готово, начинаем игру
 
@@ -112,8 +116,8 @@ async def room_actions_handler(callback: CallbackQuery, callback_data: CallbackD
         else:
             await callback.message.edit_text(TEXTS['forbidden_action'][user.language])
 
-            keyboard = await generate_room_actions_cb(room.id, user.language)
-            await callback.message.answer(TEXTS['room_actions'][user.language], reply_markup=keyboard)
+            keyboard = await generate_room_actions_cb(room, user.language, user)
+            await callback.message.answer(TEXTS['room_actions'][user.language].format(', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
 
     elif action == 'roles':
         if room.owner == user:
@@ -132,6 +136,7 @@ async def room_actions_handler(callback: CallbackQuery, callback_data: CallbackD
 
 async def room_preparation(room: Room):
     room.teams = {}
+    available_roles = room.available_roles.copy()
     for player in room.users.values():
         player.is_alive = True
         player.role = None
@@ -151,6 +156,7 @@ async def room_preparation(room: Room):
 
         print(player.id, player.role)
     #  Роли распределены, готовы к игре
+    room.available_roles = available_roles.copy()
     room.is_active = True
     """Уведомляем игроков об их ролях и сокомандниках"""
     for player in room.users.values():
@@ -162,6 +168,7 @@ async def room_preparation(room: Room):
         if role.is_team:
             teammates = ', '.join("@" + x[0] for x in room.teams[role])  # teammates usernames
             await bot.send_message(player.id, TEXTS['your_teammates_are'][language].format(teammates))
+    await start_night(room)
 
 
 async def start_night(room: Room):
@@ -192,7 +199,7 @@ async def night_actions_handler(callback: CallbackQuery, callback_data: Callback
     player.made_move = True
     night_is_over = True
     for player in room.users.values():
-        if not player.made_move:
+        if not player.made_move and player.role.is_night:
             night_is_over = False
             break
     if night_is_over:
@@ -204,8 +211,17 @@ async def night_actions_processor(room: Room):
     victim = users[victim_id]
     if not victim.is_healed:
         victim.is_alive = False
+        for player in room.users.values():
+            await bot.send_message(player.id, TEXTS['player_killed'][player.language].format(victim.username))
+            if room.settings['do_reveal']:
+                text = TEXTS['role_reveal'][player.language].format(victim.role.name[player.language])
+                await bot.send_message(player.id, text)
+
+        await bot.send_message(victim.id, TEXTS['you_died'][victim.language])
+
     await game_ended_checker(room)
-    await day_voting_creator(room)
+    if room.is_active:
+        await day_voting_creator(room)
 
 
 async def day_voting_creator(room: Room):
@@ -244,7 +260,6 @@ async def day_voting_handler(callback: CallbackQuery, callback_data: CallbackDat
 
 
 async def day_voting_processor(room: Room):
-
     max_votes = max(room.day_voting.values())
 
     victims = [user for user, votes in room.day_voting.items() if votes == max_votes]
@@ -261,7 +276,8 @@ async def day_voting_processor(room: Room):
                 await bot.send_message(player.id, TEXTS['re_vote'][player.language], reply_markup=keyboard)
         return
     await game_ended_checker(room)
-    await start_night(room)
+    if room.is_active:
+        await start_night(room)
 
 
 async def game_ended_checker(room: Room):
@@ -282,6 +298,10 @@ async def game_end_proceed(room: Room, code: int):
     for player in room.users.values():
         await bot.send_message(player.id, TEXTS[code][player.language])
     room.is_active = False
+    for player in room.users.values():
+        player.reset()
+    keyboard = await generate_room_actions_cb(room, room.owner.language, room.owner)
+    await bot.send_message(room.owner.id, TEXTS['room_actions'][room.owner.language].format(', '.join("@" + x.username for x in room.users.values())), reply_markup=keyboard)
 
 
 @dp.callback_query(RolesAddingCb.filter())
@@ -297,8 +317,14 @@ async def roles_adding_handler(callback: CallbackQuery, callback_data: CallbackD
     name = role.name[user.language]
 
     keyboard = await generate_role_adding_kb(role_id, room_id, user.language)
-    await callback.message.edit_text(TEXTS['change_role_amount'][user.language].format(amount, name),
-                                     reply_markup=keyboard)
+    if user.language == RU:
+        name = ru_name_fixer(name, amount)
+        await callback.message.edit_text(TEXTS['change_role_amount'][user.language].format(amount, name),
+                                         reply_markup=keyboard)
+    elif user.language == EN:
+        name, to_be = en_name_fixer(name, amount)
+        await callback.message.edit_text(TEXTS['change_role_amount'][user.language].format(amount, name, to_be),
+                                         reply_markup=keyboard)
 
 
 @dp.callback_query(RoleAddCb.filter())
@@ -320,8 +346,14 @@ async def role_add_handler(callback: CallbackQuery, callback_data: CallbackData)
     name = role.name[user.language]
 
     keyboard = await generate_role_adding_kb(role_id, room_id, user.language)
-    await callback.message.edit_text(TEXTS['change_role_amount'][user.language].format(amount, name),
-                                     reply_markup=keyboard)
+    if user.language == RU:
+        name = ru_name_fixer(name, amount)
+        await callback.message.edit_text(TEXTS['change_role_amount'][user.language].format(amount, name),
+                                         reply_markup=keyboard)
+    elif user.language == EN:
+        name, to_be = en_name_fixer(name, amount)
+        await callback.message.edit_text(TEXTS['change_role_amount'][user.language].format(amount, name, to_be),
+                                         reply_markup=keyboard)
 
 
 @dp.callback_query(UserSettingsCb.filter())
@@ -353,11 +385,11 @@ async def room_settings_handler(callback: CallbackQuery, callback_data: Callback
     setting = callback_data.setting
     user = users[callback.message.chat.id]
     keyboard = await generate_room_setting_kb(room_id, setting, user.language)
-    if setting == 'doReveal':
+    if setting == 'do_reveal':
         await callback.message.edit_text(TEXTS['setting_change'][user.language], reply_markup=keyboard)
     elif setting == 'cancel':
-        keyboard = await generate_room_actions_cb(room_id, user.language)
-        await callback.message.edit_text(TEXTS['room_actions'][user.language], reply_markup=keyboard)
+        keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
+        await callback.message.edit_text(TEXTS['room_actions'][user.language].format(', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
 
 
 @dp.callback_query(RoomSettingCb.filter())
@@ -373,8 +405,8 @@ async def room_settings_handler(callback: CallbackQuery, callback_data: Callback
     room.set_setting(setting, value)
     await callback.message.edit_text(TEXTS['setting_changed'][user.language])
 
-    keyboard = await generate_room_actions_cb(room_id, user.language)
-    await callback.message.answer(TEXTS['room_actions'][user.language], reply_markup=keyboard)
+    keyboard = await generate_room_actions_cb(room, user.language, user)
+    await callback.message.answer(TEXTS['room_actions'][user.language].format(', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
 
 
 @dp.message(lambda message: message.chat.id not in users)
@@ -388,12 +420,15 @@ async def startup(message: Message):
     command = message.text.split()
     if len(command) == 2:  # Есть параметр у команды
         if user.current_room is not None:
-            room_id = user.current_room.id
-            keyboard = await generate_room_actions_cb(room_id, user.language)
+            keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
             return await message.answer(TEXTS['already_joined'][user.language], reply_markup=keyboard)
         token = command[-1]
         await join_room(message, token, user)
-
+        if user.current_room is not None:
+            keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
+            await message.answer(TEXTS['room_actions'][user.language].format(
+                ', '.join("@" + x.username for x in user.current_room.users.values())), reply_markup=keyboard)
+            return
     await message.answer(TEXTS['startup'][user.language], reply_markup=KEYBOARDS['startup'][user.language])
 
 
@@ -412,14 +447,21 @@ async def join_room(message, token, user):
     for room in rooms.values():
         if room.token == token:
             if user.current_room is not None:
-                keyboard = await generate_room_actions_cb(room.id, user.language)
+                keyboard = await generate_room_actions_cb(user.current_room, user.language, user)
                 return await message.answer(TEXTS['already_joined'][user.language], reply_markup=keyboard)
-            room.add_user(user)
-            owner_id = room.owner.id
             username = message.chat.username
 
             await message.answer(TEXTS['room_join'][user.language])
-            await bot.send_message(owner_id, TEXTS['room_join_owner'][user.language].format(username))
+            for player in room.users.values():
+                await bot.send_message(player.id, TEXTS['room_joined'][player.language].format(username))
+
+            room.add_user(user)
+            owner = room.owner
+            language = owner.language
+
+            keyboard = await generate_room_actions_cb(owner.current_room, user.language, owner)
+            text = TEXTS['room_actions'][language].format(', '.join("@" + x.username for x in room.users.values()))
+            await bot.send_message(owner.id, text, reply_markup=keyboard)
             return
 
     await message.answer(TEXTS['wrong_token'][user.language], reply_markup=KEYBOARDS['startup'][user.language])
