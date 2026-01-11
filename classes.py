@@ -11,9 +11,10 @@ class User:
         self.id = tg_id
         self.username = username
         self.current_room = None
-        self.isShot = False
-        self.isAlive = True
+        self.is_alive = True
+        self.is_healed = False
         self.role = None
+        self.made_move = False
 
     def set_language(self, lang: int) -> None:
         self.language = lang
@@ -64,12 +65,17 @@ class Room(Users):
         super().__init__()
         self.owner: User = owner
         self.day_state: int = DAY
+        self.day = 0
         self.add_user(owner)
         self.id = room_id
         self.token = token
         self.settings = {'doReveal': True}
         self.available_roles = {Doctor: 0, Civilian: 0, Mafia: 0}
         self.is_active = False
+        self.teams = {}
+        self.teams_votes = {}
+        self.users: dict[int, User]
+        self.day_voting: dict[User, int] = {}
 
     def set_setting(self, setting, value):
         self.settings[setting] = value
@@ -122,7 +128,7 @@ class Mafia(Role):
         super().__init__(room)
 
     def night_action(self, victim_id: int):
-        self.room.users[victim_id].isShot = 1
+        self.room.users[victim_id].is_shot = 1
 
 
 class Doctor(Role):
@@ -139,7 +145,7 @@ class Doctor(Role):
         super().__init__(room)
 
     def night_action(self, victim_id: int):
-        self.room.users[victim_id].isShot = 0
+        self.room.users[victim_id].is_shot = 0
 
 
 class Civilian(Role):

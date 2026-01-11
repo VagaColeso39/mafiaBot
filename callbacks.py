@@ -1,6 +1,15 @@
 from aiogram.filters.callback_data import CallbackData
 
 
+class NightActionCb(CallbackData, prefix="NightAction"):
+    target_id: int
+    player_id: int
+
+
+class DayVotingCb(CallbackData, prefix="DayVoting"):
+    target_id: int
+    player_id: int
+
 
 class RolesAddingCb(CallbackData, prefix='RoleAdding'):
     role_id: int

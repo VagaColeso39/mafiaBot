@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from consts import *
 from callbacks import *
+from classes import *
 
 
 async def generate_room_actions_cb(room_id: int, language: int):
@@ -87,6 +88,32 @@ async def generate_role_adding_kb(role_id, room_id, language):
     return keyboard
 
 
+async def generate_night_action_kb(room: Room, player: User):
+    inline_keyboard = []
+    for target in room.users.values():
+        cb = NightActionCb(target_id=target.id, player_id=player.id).pack()
+        button = InlineKeyboardButton(text=target.username, callback_data=cb)
+        inline_keyboard.append(button)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[inline_keyboard])
+    return keyboard
+
+async def generate_day_voting_kb(room: Room, player: User, victims: [User]=None):
+    inline_keyboard = []
+    if victims is not None:
+        for victim in victims:
+            cb = DayVotingCb(target_id=victim.id, player_id=player.id).pack()
+            button = InlineKeyboardButton(text=victim.username, callback_data=cb)
+            inline_keyboard.append(button)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[inline_keyboard])
+    else:
+        for victim in room.users.values():
+            cb = DayVotingCb(target_id=victim.id, player_id=player.id).pack()
+            button = InlineKeyboardButton(text=victim.username, callback_data=cb)
+            inline_keyboard.append(button)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[inline_keyboard])
+    return keyboard
+
+
 async def generate_room_setting_kb(room_id: int, setting: str, language: int):
     if setting == 'doReveal':
         if language == RU:
@@ -163,7 +190,23 @@ TEXTS = {
     'your_role_is': {RU: 'Ваша роль: {0}, {1}',
                      EN: "Your role is: {0}, {1}"},
     'your_teammates_are': {RU: "С вами в команде: {0}",
-                           EN: "You are playing with: 0{}"}
+                           EN: "You are playing with: 0{}"},
+    'choose_target': {RU: "Выберите, на кого применить свое действие",
+                      EN: "Choose target for your action"},
+    'choose_voting': {RU: "Выберите, игрока, которого вы хотите исключить",
+                      EN: "Vote for the player to kick"},
+    're_vote': {RU: "Несколько человек с равным количеством голосов, выберите из них того, кого вы хотели бы исключить",
+                EN: 'Several people with the same number of votes, choose from them the one you would like to kick'},
+    'action_done': {RU: "Ваше действие засчитано, ожидайте остальных игроков",
+                    EN: "Your action was accepted, wait for the other players"},
+    'voting_done': {RU: "Ваш голос засчитан, ожидайте остальных игроков",
+                    EN: "Your vote is accepted, wait for the other players"},
+    'day_voting_kicked': {RU: "Голосованием выгнан игрок {0}",
+                          EN: "{0} was kicked by the voting"},
+    MAFIA_WON: {RU: "Мафия получила большинство среди игроков. Победа мафии",
+                EN: "mafia gained a majority among the players. Mafia won"},
+    CIVILIANS_WON: {RU: "Мирные изгнали все отрицательные и нейтральные роли. Победа мирных",
+                    EN: "civilians have driven out all the negative and neutral roles. Civilians won"}
 }
 KEYBOARDS = {
     'choose_language': InlineKeyboardMarkup(inline_keyboard=[[

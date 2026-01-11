@@ -133,9 +133,9 @@ async def room_actions_handler(callback: CallbackQuery, callback_data: CallbackD
 async def room_preparation(room: Room):
     room.teams = {}
     for player in room.users.values():
-        player.isShot = False
-        player.isAlive = True
+        player.is_alive = True
         player.role = None
+        player.made_move = False
         while player.role is None:
             role = random.choice(tuple(room.available_roles.keys()))
             amount = room.available_roles[role]
@@ -160,8 +160,128 @@ async def room_preparation(room: Room):
         await bot.send_message(player.id, text)
 
         if role.is_team:
-            teammates = ', '.join(x[0] for x in room.teams[role])  # teammates usernames
+            teammates = ', '.join("@" + x[0] for x in room.teams[role])  # teammates usernames
             await bot.send_message(player.id, TEXTS['your_teammates_are'][language].format(teammates))
+
+
+async def start_night(room: Room):
+    room.day_state = NIGHT
+    for player in room.users.values():
+        if player.role.is_night and player.is_alive:
+            player.made_move = False
+            keyboard = await generate_night_action_kb(room, player)
+            await bot.send_message(player.id, TEXTS['choose_target'][player.language], reply_markup=keyboard)
+
+
+@dp.callback_query(NightActionCb.filter())
+async def night_actions_handler(callback: CallbackQuery, callback_data: CallbackData):
+    player = users[callback_data.player_id]
+    target = users[callback_data.target_id]
+
+    role = player.role
+    room: Room = player.current_room
+    if role == Doctor:
+        target.is_healed = True
+    elif role == Mafia:
+        if Mafia in room.teams_votes:
+            room.teams_votes[Mafia].append(target.id)
+        else:
+            room.teams_votes[Mafia] = [target.id]
+    await callback.message.edit_text(TEXTS['action_done'][player.language])
+
+    player.made_move = True
+    night_is_over = True
+    for player in room.users.values():
+        if not player.made_move:
+            night_is_over = False
+            break
+    if night_is_over:
+        await night_actions_processor(room)
+
+
+async def night_actions_processor(room: Room):
+    victim_id = random.choice(room.teams_votes[Mafia])
+    victim = users[victim_id]
+    if not victim.is_healed:
+        victim.is_alive = False
+    await game_ended_checker(room)
+    await day_voting_creator(room)
+
+
+async def day_voting_creator(room: Room):
+    room.day_state = DAY
+    room.day += 1
+    room.day_voting = {}
+    for player in room.users.values():
+        player.is_healed = False
+
+        if player.is_alive:
+            player.made_move = False
+            keyboard = await generate_day_voting_kb(room, player)
+            await bot.send_message(player.id, TEXTS['choose_voting'][player.language], reply_markup=keyboard)
+
+
+@dp.callback_query(DayVotingCb.filter())
+async def day_voting_handler(callback: CallbackQuery, callback_data: CallbackData):
+    player = users[callback_data.player_id]
+    target = users[callback_data.target_id]
+
+    room: Room = player.current_room
+
+    await callback.message.edit_text(TEXTS['voting_done'][player.language])
+    if target in room.day_voting:
+        room.day_voting[target] += 1
+    else:
+        room.day_voting[target] = 1
+    player.made_move = True
+    day_is_over = True
+    for player in room.users.values():
+        if not player.made_move:
+            day_is_over = False
+            break
+    if day_is_over:
+        await day_voting_processor(room)
+
+
+async def day_voting_processor(room: Room):
+
+    max_votes = max(room.day_voting.values())
+
+    victims = [user for user, votes in room.day_voting.items() if votes == max_votes]
+    if len(victims) == 1:
+        victim = victims[0]
+        victim.is_alive = False
+        for player in room.users.values():
+            await bot.send_message(player.id, TEXTS['day_voting_kicked'][player.language].format(victim.username))
+    elif len(victims) > 1:
+        for player in room.users.values():
+            if player.is_alive:
+                player.made_move = False
+                keyboard = await generate_day_voting_kb(room, player, victims)
+                await bot.send_message(player.id, TEXTS['re_vote'][player.language], reply_markup=keyboard)
+        return
+    await game_ended_checker(room)
+    await start_night(room)
+
+
+async def game_ended_checker(room: Room):
+    mafia_amount = 0
+    civilians_amount = 0
+    for player in room.users.values():
+        if player.role == Mafia and player.is_alive:
+            mafia_amount += 1
+        elif player.role in (Doctor, Civilian) and player.is_alive:
+            civilians_amount += 1
+    if mafia_amount >= civilians_amount:
+        return await game_end_proceed(room, MAFIA_WON)
+    if mafia_amount == 0:
+        return await game_end_proceed(room, CIVILIANS_WON)
+
+
+async def game_end_proceed(room: Room, code: int):
+    for player in room.users.values():
+        await bot.send_message(player.id, TEXTS[code][player.language])
+    room.is_active = False
 
 
 @dp.callback_query(RolesAddingCb.filter())
