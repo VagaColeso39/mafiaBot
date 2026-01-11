@@ -1,17 +1,19 @@
 FROM python:3.12-slim
 
-RUN apt-get update
-
-WORKDIR /bot
+WORKDIR /
 
 COPY requirements.txt .
-COPY bot.py .
-COPY .env .
+COPY main.py .
 COPY adds.py .
+COPY callbacks.py .
+COPY classes.py .
+COPY consts.py .
+
+COPY .env .
 
 
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 RUN ls -la
 
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]

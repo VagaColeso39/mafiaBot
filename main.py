@@ -20,13 +20,13 @@ rooms = {}
 ROLES = {0: Civilian, 1: Mafia, 2: Doctor}
 
 
-# conn = psycopg2.connect(
-#     host=os.getenv('DB_HOST'),
-#     database=os.getenv('DB_NAME'),
-#     user=os.getenv('DB_USER'),
-#     password=os.getenv('DB_PASSWORD'),
-#     port=os.getenv('DB_PORT')
-# )
+conn = psycopg2.connect(
+    host=os.getenv('DB_HOST'),
+    database=os.getenv('DB_NAME'),
+    user=os.getenv('DB_USER'),
+    password=os.getenv('DB_PASSWORD'),
+    port=os.getenv('DB_PORT')
+)
 
 
 @dp.callback_query(LangCb.filter())
@@ -40,6 +40,9 @@ async def choose_language_handler(callback: CallbackQuery, callback_data: Callba
     else:
         username = callback.message.chat.username
         users.create_user(user_id, language, DEFAULT_STATE, username)
+        with conn.cursor() as cursor:
+            cursor.execute(CREATE_USER, (user_id, username, language))
+            conn.commit()
     await callback.message.edit_text(TEXTS['language_changed'][language])
     user = users[user_id]
     if user.current_room is None:
@@ -467,7 +470,24 @@ async def join_room(message, token, user):
     await message.answer(TEXTS['wrong_token'][user.language], reply_markup=KEYBOARDS['startup'][user.language])
 
 
+def create_db():
+    with conn.cursor() as cursor:
+        cursor.execute(CREATE_USERS_TABLE)
+        conn.commit()
+
+
+def load_users():
+    print("loading users...")
+    with conn.cursor() as cursor:
+        cursor.execute(GET_ALL_USERS)
+        for user_data in cursor.fetchall():
+            tg_id, username, language = user_data
+            users.create_user(tg_id, language, DEFAULT_STATE, username)
+
+
 async def main():
+    create_db()
+    load_users()
     await dp.start_polling(bot)
 
 

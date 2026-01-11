@@ -15,8 +15,11 @@ services:
   bot:
     build: .
     volumes:
-      - /bot.py:/bot/bot.py
-      - /adds.py:/bot/adds.py
+      - ./main.py:/main.py
+      - ./adds.py:/adds.py
+      - ./callbacks.py:/callbacks.py
+      - ./classes.py:/classes.py
+      - ./consts.py:/consts.py
     depends_on:
       - db
 
